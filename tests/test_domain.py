@@ -129,6 +129,31 @@ def test_random_selection_is_reproducible_and_prefers_unsolved():
     assert selected[0].id != "a"
 
 
+def test_random_selection_prefers_unseen_over_seen_unsolved_questions():
+    bank = [exercise("assisted"), exercise("failed"), exercise("unseen"), exercise("solved")]
+    for seed in range(10):
+        assert select_exercises(
+            bank, seed=seed, solved={"solved"}, seen={"assisted", "failed", "solved"}
+        ) == [bank[2]]
+
+
+def test_unseen_first_batch_fills_with_seen_unsolved_and_remains_reproducible():
+    bank = [exercise("seen-a"), exercise("seen-b"), exercise("new-a"), exercise("new-b")]
+    options = {"seed": 7, "seen": {"seen-a", "seen-b"}, "count": 3}
+    selected = select_exercises(bank, **options)
+    assert {item.id for item in selected[:2]} == {"new-a", "new-b"}
+    assert selected[2].id in options["seen"]
+    assert selected == select_exercises(bank, **options)
+    assert len({item.id for item in selected}) == 3
+
+
+def test_unseen_preference_respects_filters_and_explicit_retries():
+    bank = [exercise("seen"), exercise("new", topic="joins")]
+    assert select_exercises(bank, topic="windows", seen={"seen"}) == [bank[0]]
+    assert select_exercises(bank, identifier="seen", seen={"seen"}) == [bank[0]]
+    assert select_exercises(bank, seen={"seen", "new"}, count=2)
+
+
 def test_selection_does_not_relax_filters():
     with pytest.raises(ValueError, match="No exercises"):
         select_exercises([exercise("a")], topic="unknown")

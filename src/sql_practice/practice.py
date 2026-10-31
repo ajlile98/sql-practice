@@ -38,6 +38,7 @@ class PracticeService:
             engine=engine,
             seed=seed,
             solved=solved,
+            seen=self.store.seen_exercises(),
             strategy=self.selection_strategy,
             categories=self.categories,
             **filters,

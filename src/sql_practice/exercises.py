@@ -123,14 +123,18 @@ class SelectionStrategy(Protocol):
 class UnsolvedRandom:
     seed: int | None
     solved: set[str]
+    seen: set[str] | None = None
 
     def choose(self, bank: list[Exercise], count: int) -> list[Exercise]:
         generator = random.Random(self.seed)
         fresh = [item for item in bank if item.id not in self.solved]
+        unseen = [item for item in fresh if item.id not in (self.seen or set())]
+        seen_unsolved = [item for item in fresh if item.id in (self.seen or set())]
         repeated = [item for item in bank if item.id in self.solved]
-        generator.shuffle(fresh)
+        generator.shuffle(unseen)
+        generator.shuffle(seen_unsolved)
         generator.shuffle(repeated)
-        return (fresh + repeated)[:count]
+        return (unseen + seen_unsolved + repeated)[:count]
 
 
 @dataclass
@@ -177,6 +181,7 @@ def select_exercises(
     count: int = 1,
     seed: int | None = None,
     solved: set[str] | None = None,
+    seen: set[str] | None = None,
     strategy: SelectionStrategy | None = None,
     category: str | None = None,
     categories: Categories | None = None,
@@ -213,7 +218,7 @@ def select_exercises(
                 )
             candidates = unsolved
     policy = strategy or (
-        ExplicitSelection(identifier) if identifier else UnsolvedRandom(seed, solved or set())
+        ExplicitSelection(identifier) if identifier else UnsolvedRandom(seed, solved or set(), seen)
     )
     return policy.choose(candidates, count)
 

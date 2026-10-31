@@ -101,6 +101,12 @@ class SessionStore:
     def attempts(self):
         return self._state()["attempts"]
 
+    def seen_exercises(self) -> set[str]:
+        seen = {attempt["exercise"] for attempt in self.attempts()}
+        for manifest in (self.directory / "sessions").glob("*/session.json"):
+            seen.update(json.loads(manifest.read_text())["exercises"])
+        return seen
+
     def assert_sandbox_version(self, engine, version):
         marker = self.directory / f"{engine}.version"
         if marker.exists() and marker.read_text() != version:

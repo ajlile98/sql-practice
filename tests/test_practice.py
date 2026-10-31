@@ -24,6 +24,7 @@ def make_service():
         False,
     )
     store = Mock(spec=SessionStore)
+    store.seen_exercises.return_value = set()
     session = {
         "id": "session",
         "engine": "sqlite",
@@ -113,6 +114,20 @@ def test_facade_accepts_new_selection_strategy():
     service.start(seed=42)
     policy.choose.assert_called_once_with(service.bank, 1)
     assert store.create.call_args.args[0] == service.bank
+
+
+@pytest.mark.parametrize("checked", [False, True])
+def test_start_prefers_unseen_over_previously_assigned_questions(checked):
+    service, store, _session, _connection = make_service()
+    unseen = replace(service.bank[0], id="unseen")
+    service.bank.append(unseen)
+    store.attempts.return_value = (
+        [attempt("example", passed=True, assisted=True)] if checked else []
+    )
+    store.seen_exercises.return_value = {"example"}
+    for seed in range(5):
+        service.start(engine="sqlite", seed=seed)
+        assert store.create.call_args.args[0] == [unseen]
 
 
 def attempt(identifier, passed=False, assisted=False, engine="postgres", session=None):

@@ -15,6 +15,26 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.mark.integration
+def test_seen_exercises_include_unchecked_sessions_and_legacy_checks_without_writes(tmp_path):
+    store = SessionStore(tmp_path)
+    assert store.seen_exercises() == set()
+    questions = load_bank(ROOT)[:2]
+    store.create(questions, "sqlite", "v1", 1)
+    store.record({"exercise": "legacy-question"})
+    snapshot = {
+        file_path: file_path.read_bytes()
+        for file_path in store.directory.rglob("*")
+        if file_path.is_file()
+    }
+    assert store.seen_exercises() == {questions[0].id, questions[1].id, "legacy-question"}
+    assert snapshot == {
+        file_path: file_path.read_bytes()
+        for file_path in store.directory.rglob("*")
+        if file_path.is_file()
+    }
+
+
+@pytest.mark.integration
 def test_session_persistence_resume_and_reset(tmp_path):
     store = SessionStore(tmp_path)
     question = load_bank(ROOT)[0]
