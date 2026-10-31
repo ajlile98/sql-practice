@@ -1,0 +1,30 @@
+name: SQL practice checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.9.26'
+          enable-cache: true
+      - run: uv python install 3.12
+      - run: uv sync --locked --python 3.12
+      - run: uv run ruff check .
+      - run: uv run pytest -m 'not integration' -q
+      - run: uv run sql-practice db up --engine postgres
+      - run: uv run sql-practice db up --engine mysql
+      - run: uv run pytest --cov=sql_practice --cov-fail-under=80 --cov-report=term-missing
+        env:
+          SQL_PRACTICE_TEST_SERVERS: '1'
+      - run: |
+          uv run coverage json -o .practice/coverage.json
+          uv run python -c 'import json; data=json.load(open(".practice/coverage.json")); low={name: details["summary"]["percent_covered"] for name, details in data["files"].items() if details["summary"]["percent_covered"] < 80}; assert not low, low'
+      - run: uv run sql-practice validate-bank --all-engines
+      - if: always()
+        run: |
+          uv run sql-practice db down --engine postgres
+          uv run sql-practice db down --engine mysql

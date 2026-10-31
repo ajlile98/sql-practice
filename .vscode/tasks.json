@@ -1,0 +1,11 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {"label": "SQL: Start Practice", "type": "process", "command": "uv", "args": ["run", "sql-practice", "start", "--engine", "${input:engine}"], "options": {"cwd": "${workspaceFolder}"}, "problemMatcher": []},
+    {"label": "SQL: Resume", "type": "process", "command": "uv", "args": ["run", "sql-practice", "resume"], "options": {"cwd": "${workspaceFolder}"}, "problemMatcher": []},
+    {"label": "SQL: Run Answer", "type": "process", "command": "uv", "args": ["run", "sql-practice", "run"], "options": {"cwd": "${workspaceFolder}"}, "problemMatcher": []},
+    {"label": "SQL: Check Answer", "type": "process", "command": "uv", "args": ["run", "sql-practice", "check"], "options": {"cwd": "${workspaceFolder}"}, "problemMatcher": []},
+    {"label": "SQL: Progress", "type": "process", "command": "uv", "args": ["run", "sql-practice", "progress"], "options": {"cwd": "${workspaceFolder}"}, "problemMatcher": []}
+  ],
+  "inputs": [{"id": "engine", "type": "pickString", "description": "Practice database", "options": ["postgres", "mysql", "sqlite"], "default": "postgres"}]
+}

@@ -1,0 +1,195 @@
+version: 1
+exercises:
+  - id: customer-spending
+    title: Paid spending for every customer
+    difficulty: intermediate
+    tags: [joins, aggregation]
+    prompt: Return every customer's customer_id and total_cents spent on paid orders. Include customers with no paid orders with zero. Exclude pending and refunded orders. Row order is not graded.
+    columns: [customer_id, total_cents]
+    hints: [Start from customers so customers without orders remain., Put the paid filter inside the join and COALESCE the sum.]
+    solutions:
+      shared: SELECT c.id AS customer_id, COALESCE(SUM(o.total_cents),0) AS total_cents FROM customers c LEFT JOIN orders o ON o.customer_id=c.id AND o.status='paid' GROUP BY c.id
+  - id: never-paid
+    title: Customers who never placed a paid order
+    difficulty: intermediate
+    tags: [joins, anti-joins]
+    prompt: Return customer_id for every customer with no paid orders. A customer with only pending or refunded orders qualifies. Row order is not graded.
+    columns: [customer_id]
+    hints: [Ask whether a paid order exists for each customer., Use a correlated NOT EXISTS restricted to paid orders.]
+    solutions:
+      shared: SELECT c.id AS customer_id FROM customers c WHERE NOT EXISTS (SELECT 1 FROM orders o WHERE o.customer_id=c.id AND o.status='paid')
+  - id: product-revenue
+    title: Product revenue without losing unsold products
+    difficulty: intermediate
+    tags: [joins, aggregation]
+    prompt: Return product_id and revenue_cents for every product. Revenue is quantity times unit_price_cents from paid orders only. Include zero for unsold products. Row order is not graded.
+    columns: [product_id, revenue_cents]
+    hints: [Keep products on the preserved side of a LEFT JOIN., Aggregate paid item revenue first or use conditional aggregation.]
+    solutions:
+      shared: SELECT p.id AS product_id, COALESCE(SUM(CASE WHEN o.status='paid' THEN i.quantity*i.unit_price_cents ELSE 0 END),0) AS revenue_cents FROM products p LEFT JOIN order_items i ON i.product_id=p.id LEFT JOIN orders o ON o.id=i.order_id GROUP BY p.id
+  - id: regional-outperformers
+    title: Customers above their region's average spending
+    difficulty: intermediate
+    tags: [ctes, windows, aggregation]
+    prompt: Compute paid-order spending for every customer including zero spenders. Return customer_id and total_cents only for customers strictly above their region's average. Treat NULL regions as a single region. Row order is not graded.
+    columns: [customer_id, total_cents]
+    hints: [First compute one spending row per customer., Use AVG(total_cents) OVER (PARTITION BY region) in another query layer.]
+    solutions:
+      shared: WITH spend AS (SELECT c.id, c.region, COALESCE(SUM(o.total_cents),0) AS total_cents FROM customers c LEFT JOIN orders o ON o.customer_id=c.id AND o.status='paid' GROUP BY c.id,c.region), ranked AS (SELECT id,total_cents,AVG(total_cents) OVER (PARTITION BY region) AS regional_average FROM spend) SELECT id AS customer_id,total_cents FROM ranked WHERE total_cents>regional_average
+  - id: latest-order
+    title: Latest order per ordering customer
+    difficulty: intermediate
+    tags: [windows, ranking, deduplication]
+    prompt: For each customer with any orders return customer_id and order_id of their latest order regardless of status. Latest means greatest ordered_on; break same-day ties by greatest id. Row order is not graded.
+    columns: [customer_id, order_id]
+    hints: [An order ID alone is not a chronology., Use ROW_NUMBER partitioned by customer and order by date descending then id descending.]
+    solutions:
+      shared: WITH ranked AS (SELECT customer_id,id,ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY ordered_on DESC,id DESC) AS position FROM orders) SELECT customer_id,id AS order_id FROM ranked WHERE position=1
+  - id: category-leaders
+    title: Top two revenue ranks in every category
+    difficulty: intermediate
+    tags: [windows, ranking, joins]
+    prompt: Return category, product_id, revenue_cents, and revenue_rank for products in the top two distinct paid-revenue ranks per category. Include zero-revenue products when their rank qualifies. Ties share a DENSE_RANK. Row order is not graded.
+    columns: [category, product_id, revenue_cents, revenue_rank]
+    hints: [Aggregate product revenue including zero before ranking., DENSE_RANK over category ordered by revenue descending includes tied products.]
+    solutions:
+      shared: WITH revenue AS (SELECT p.category,p.id AS product_id,COALESCE(SUM(CASE WHEN o.status='paid' THEN i.quantity*i.unit_price_cents ELSE 0 END),0) AS revenue_cents FROM products p LEFT JOIN order_items i ON i.product_id=p.id LEFT JOIN orders o ON o.id=i.order_id GROUP BY p.category,p.id), ranked AS (SELECT category,product_id,revenue_cents,DENSE_RANK() OVER (PARTITION BY category ORDER BY revenue_cents DESC) AS revenue_rank FROM revenue) SELECT category,product_id,revenue_cents,revenue_rank FROM ranked WHERE revenue_rank<=2
+  - id: monthly-revenue
+    title: Paid revenue by calendar month
+    difficulty: intermediate
+    tags: [dates, aggregation]
+    prompt: Return month in YYYY-MM format and revenue_cents for months containing paid orders. Use ordered_on rather than payment dates. Sort month ascending.
+    ordered: true
+    columns: [month, revenue_cents]
+    hints: [Format each ordered_on as a calendar year and month., PostgreSQL uses TO_CHAR; MySQL DATE_FORMAT; SQLite SUBSTR on its ISO date text.]
+    solutions:
+      sqlite: SELECT SUBSTR(ordered_on,1,7) AS month,SUM(total_cents) AS revenue_cents FROM orders WHERE status='paid' GROUP BY SUBSTR(ordered_on,1,7) ORDER BY month
+      postgres: SELECT TO_CHAR(ordered_on,'YYYY-MM') AS month,SUM(total_cents) AS revenue_cents FROM orders WHERE status='paid' GROUP BY TO_CHAR(ordered_on,'YYYY-MM') ORDER BY month
+      mysql: SELECT DATE_FORMAT(ordered_on,'%Y-%m') AS month,SUM(total_cents) AS revenue_cents FROM orders WHERE status='paid' GROUP BY DATE_FORMAT(ordered_on,'%Y-%m') ORDER BY month
+  - id: cumulative-revenue
+    title: Running paid revenue
+    difficulty: intermediate
+    tags: [dates, windows, ctes]
+    prompt: Return month in YYYY-MM format, revenue_cents, and cumulative_cents for months with paid orders. Running revenue includes all prior observed months. Sort month ascending.
+    ordered: true
+    columns: [month, revenue_cents, cumulative_cents]
+    hints: [Aggregate monthly revenue in a CTE., Apply SUM over an explicit ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW frame.]
+    solutions:
+      sqlite: WITH monthly AS (SELECT SUBSTR(ordered_on,1,7) AS month,SUM(total_cents) AS revenue_cents FROM orders WHERE status='paid' GROUP BY SUBSTR(ordered_on,1,7)) SELECT month,revenue_cents,SUM(revenue_cents) OVER (ORDER BY month ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS cumulative_cents FROM monthly ORDER BY month
+      postgres: WITH monthly AS (SELECT TO_CHAR(ordered_on,'YYYY-MM') AS month,SUM(total_cents) AS revenue_cents FROM orders WHERE status='paid' GROUP BY TO_CHAR(ordered_on,'YYYY-MM')) SELECT month,revenue_cents,SUM(revenue_cents) OVER (ORDER BY month ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS cumulative_cents FROM monthly ORDER BY month
+      mysql: WITH monthly AS (SELECT DATE_FORMAT(ordered_on,'%Y-%m') AS month,SUM(total_cents) AS revenue_cents FROM orders WHERE status='paid' GROUP BY DATE_FORMAT(ordered_on,'%Y-%m')) SELECT month,revenue_cents,SUM(revenue_cents) OVER (ORDER BY month ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS cumulative_cents FROM monthly ORDER BY month
+  - id: repeat-customers
+    title: Repeat paid-order customers
+    difficulty: intermediate
+    tags: [aggregation, interviews]
+    prompt: Return customer_id and paid_orders for customers with at least two paid orders. Count orders not payment attempts or line items. Row order is not graded.
+    columns: [customer_id, paid_orders]
+    hints: [This question needs only the orders table., Filter paid orders then GROUP BY customer_id and use HAVING.]
+    solutions:
+      shared: SELECT customer_id,COUNT(*) AS paid_orders FROM orders WHERE status='paid' GROUP BY customer_id HAVING COUNT(*)>=2
+  - id: recovered-payments
+    title: Orders with failed and successful payment attempts
+    difficulty: intermediate
+    tags: [joins, subqueries, deduplication]
+    prompt: Return each order_id that has at least one failed payment and at least one succeeded payment. Do not infer chronology; both statuses merely need to exist. Return each qualifying order once. Row order is not graded.
+    columns: [order_id]
+    hints: [Joining all attempts can multiply rows., Use EXISTS twice or grouped conditional counts.]
+    solutions:
+      shared: SELECT o.id AS order_id FROM orders o WHERE EXISTS (SELECT 1 FROM payments p WHERE p.order_id=o.id AND p.status='failed') AND EXISTS (SELECT 1 FROM payments p WHERE p.order_id=o.id AND p.status='succeeded')
+  - id: active-subscribers
+    title: Active subscribers at a fixed date
+    difficulty: intermediate
+    tags: [dates, deduplication]
+    prompt: Return distinct customer_id with an active subscription on 2025-03-01. A subscription covers the half-open interval [started_on, ended_on); NULL ended_on means no end. Row order is not graded.
+    columns: [customer_id]
+    hints: [An ending exactly on the as-of date is not active., Use started_on <= the date and ended_on > the date or NULL; deduplicate customers.]
+    solutions:
+      shared: SELECT DISTINCT customer_id FROM subscriptions WHERE started_on<='2025-03-01' AND (ended_on>'2025-03-01' OR ended_on IS NULL)
+  - id: average-order-value
+    title: Average paid order value per ordering customer
+    difficulty: intermediate
+    tags: [aggregation, interviews]
+    prompt: Return customer_id and average_cents for customers with at least one paid order. Average total_cents per paid order rounded to two decimal places. Do not join payments. Row order is not graded.
+    columns: [customer_id, average_cents]
+    hints: [Restrict orders to status paid., ROUND(AVG(total_cents),2) uses order values directly.]
+    solutions:
+      shared: SELECT customer_id,ROUND(AVG(total_cents),2) AS average_cents FROM orders WHERE status='paid' GROUP BY customer_id
+  - id: consecutive-months
+    title: Consecutive purchasing month islands
+    difficulty: advanced
+    tags: [dates, windows, gaps-islands]
+    prompt: For each maximal run of consecutive calendar months with paid orders by a customer, return customer_id, start_month, end_month (YYYY-MM strings), and month_count. Include single-month islands; multiple paid orders in a month count once. Row order is not graded.
+    columns: [customer_id, start_month, end_month, month_count]
+    hints: [Deduplicate customer/month pairs and assign each month an integer year*12+month., Subtract ROW_NUMBER from that month index; the difference is constant within an island.]
+    solutions:
+      sqlite: WITH months AS (SELECT DISTINCT customer_id,SUBSTR(ordered_on,1,7) AS month,CAST(SUBSTR(ordered_on,1,4) AS INTEGER)*12+CAST(SUBSTR(ordered_on,6,2) AS INTEGER) AS index_value FROM orders WHERE status='paid'), islands AS (SELECT customer_id,month,index_value-ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY index_value) AS island FROM months) SELECT customer_id,MIN(month) AS start_month,MAX(month) AS end_month,COUNT(*) AS month_count FROM islands GROUP BY customer_id,island
+      postgres: WITH months AS (SELECT DISTINCT customer_id,TO_CHAR(ordered_on,'YYYY-MM') AS month,EXTRACT(YEAR FROM ordered_on)*12+EXTRACT(MONTH FROM ordered_on) AS index_value FROM orders WHERE status='paid'), islands AS (SELECT customer_id,month,index_value-ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY index_value) AS island FROM months) SELECT customer_id,MIN(month) AS start_month,MAX(month) AS end_month,COUNT(*) AS month_count FROM islands GROUP BY customer_id,island
+      mysql: WITH months AS (SELECT DISTINCT customer_id,DATE_FORMAT(ordered_on,'%Y-%m') AS month,YEAR(ordered_on)*12+MONTH(ordered_on) AS index_value FROM orders WHERE status='paid'), islands AS (SELECT customer_id,month,index_value-ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY index_value) AS island FROM months) SELECT customer_id,MIN(month) AS start_month,MAX(month) AS end_month,COUNT(*) AS month_count FROM islands GROUP BY customer_id,island
+  - id: next-month-retention
+    title: First-purchase cohort retention
+    difficulty: advanced
+    tags: [dates, ctes, retention]
+    prompt: A cohort is a customer's first paid-order month. Return cohort_month (YYYY-MM), cohort_customers, and retained_customers who place a paid order in exactly the next calendar month. Include cohorts with zero retained customers. No observation cutoff is applied. Row order is not graded.
+    columns: [cohort_month, cohort_customers, retained_customers]
+    hints: [Build distinct customer/month rows using a year*12+month integer., Find each customer's first month and LEFT JOIN their activity at first_index+1.]
+    solutions:
+      sqlite: WITH months AS (SELECT DISTINCT customer_id,SUBSTR(ordered_on,1,7) AS month,CAST(SUBSTR(ordered_on,1,4) AS INTEGER)*12+CAST(SUBSTR(ordered_on,6,2) AS INTEGER) AS index_value FROM orders WHERE status='paid'), firsts AS (SELECT customer_id,MIN(month) AS cohort_month,MIN(index_value) AS first_index FROM months GROUP BY customer_id) SELECT f.cohort_month,COUNT(*) AS cohort_customers,COUNT(m.customer_id) AS retained_customers FROM firsts f LEFT JOIN months m ON m.customer_id=f.customer_id AND m.index_value=f.first_index+1 GROUP BY f.cohort_month
+      postgres: WITH months AS (SELECT DISTINCT customer_id,TO_CHAR(ordered_on,'YYYY-MM') AS month,EXTRACT(YEAR FROM ordered_on)*12+EXTRACT(MONTH FROM ordered_on) AS index_value FROM orders WHERE status='paid'), firsts AS (SELECT customer_id,MIN(month) AS cohort_month,MIN(index_value) AS first_index FROM months GROUP BY customer_id) SELECT f.cohort_month,COUNT(*) AS cohort_customers,COUNT(m.customer_id) AS retained_customers FROM firsts f LEFT JOIN months m ON m.customer_id=f.customer_id AND m.index_value=f.first_index+1 GROUP BY f.cohort_month
+      mysql: WITH months AS (SELECT DISTINCT customer_id,DATE_FORMAT(ordered_on,'%Y-%m') AS month,YEAR(ordered_on)*12+MONTH(ordered_on) AS index_value FROM orders WHERE status='paid'), firsts AS (SELECT customer_id,MIN(month) AS cohort_month,MIN(index_value) AS first_index FROM months GROUP BY customer_id) SELECT f.cohort_month,COUNT(*) AS cohort_customers,COUNT(m.customer_id) AS retained_customers FROM firsts f LEFT JOIN months m ON m.customer_id=f.customer_id AND m.index_value=f.first_index+1 GROUP BY f.cohort_month
+  - id: payment-reconciliation
+    title: Paid orders whose successful payments do not reconcile
+    difficulty: advanced
+    tags: [joins, aggregation, data-quality]
+    prompt: Return order_id, total_cents, and captured_cents for paid orders whose sum of succeeded payment amounts differs from total_cents. Failed attempts contribute nothing; no succeeded payments means zero. Row order is not graded.
+    columns: [order_id, total_cents, captured_cents]
+    hints: [Aggregate payment amounts separately before comparing., LEFT JOIN the successful totals and use COALESCE to handle missing payments.]
+    solutions:
+      shared: WITH captured AS (SELECT order_id,SUM(amount_cents) AS captured_cents FROM payments WHERE status='succeeded' GROUP BY order_id) SELECT o.id AS order_id,o.total_cents,COALESCE(c.captured_cents,0) AS captured_cents FROM orders o LEFT JOIN captured c ON c.order_id=o.id WHERE o.status='paid' AND o.total_cents<>COALESCE(c.captured_cents,0)
+  - id: rolling-three-months
+    title: Calendar-complete rolling three-month revenue
+    difficulty: advanced
+    tags: [dates, windows, ctes]
+    prompt: Return the four calendar months 2025-01 through 2025-04 inclusive, even when no paid orders occurred. Output month, revenue_cents, rolling_cents (current month plus preceding two calendar months, clipped at January). Ignore all orders outside this range. Sort month ascending.
+    ordered: true
+    columns: [month, revenue_cents, rolling_cents]
+    hints: [Create a four-row month spine with UNION ALL., LEFT JOIN paid monthly totals and apply a ROWS BETWEEN 2 PRECEDING AND CURRENT ROW sum.]
+    solutions:
+      sqlite: WITH calendar AS (SELECT '2025-01' AS month UNION ALL SELECT '2025-02' UNION ALL SELECT '2025-03' UNION ALL SELECT '2025-04'), monthly AS (SELECT SUBSTR(ordered_on,1,7) AS month,SUM(total_cents) AS revenue_cents FROM orders WHERE status='paid' GROUP BY SUBSTR(ordered_on,1,7)), complete AS (SELECT c.month,COALESCE(m.revenue_cents,0) AS revenue_cents FROM calendar c LEFT JOIN monthly m ON m.month=c.month) SELECT month,revenue_cents,SUM(revenue_cents) OVER (ORDER BY month ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) AS rolling_cents FROM complete ORDER BY month
+      postgres: WITH calendar AS (SELECT '2025-01' AS month UNION ALL SELECT '2025-02' UNION ALL SELECT '2025-03' UNION ALL SELECT '2025-04'), monthly AS (SELECT TO_CHAR(ordered_on,'YYYY-MM') AS month,SUM(total_cents) AS revenue_cents FROM orders WHERE status='paid' GROUP BY TO_CHAR(ordered_on,'YYYY-MM')), complete AS (SELECT c.month,COALESCE(m.revenue_cents,0) AS revenue_cents FROM calendar c LEFT JOIN monthly m ON m.month=c.month) SELECT month,revenue_cents,SUM(revenue_cents) OVER (ORDER BY month ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) AS rolling_cents FROM complete ORDER BY month
+      mysql: WITH calendar AS (SELECT '2025-01' AS month UNION ALL SELECT '2025-02' UNION ALL SELECT '2025-03' UNION ALL SELECT '2025-04'), monthly AS (SELECT DATE_FORMAT(ordered_on,'%Y-%m') AS month,SUM(total_cents) AS revenue_cents FROM orders WHERE status='paid' GROUP BY DATE_FORMAT(ordered_on,'%Y-%m')), complete AS (SELECT c.month,COALESCE(m.revenue_cents,0) AS revenue_cents FROM calendar c LEFT JOIN monthly m ON m.month=c.month) SELECT month,revenue_cents,SUM(revenue_cents) OVER (ORDER BY month ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) AS rolling_cents FROM complete ORDER BY month
+  - id: revenue-share
+    title: Paid-revenue percentage share per customer
+    difficulty: advanced
+    tags: [windows, aggregation]
+    prompt: Return every customer_id, total_cents from paid orders (zero if none), and revenue_pct as a percentage of all paid revenue rounded to two decimal places. If global paid revenue is zero return NULL for revenue_pct. Row order is not graded.
+    columns: [customer_id, total_cents, revenue_pct]
+    hints: [Aggregate spending to one row per customer first., Divide 100.0*total_cents by NULLIF(SUM(total_cents) OVER (),0). PostgreSQL needs a numeric expression for two-argument ROUND.]
+    solutions:
+      shared: WITH spend AS (SELECT c.id AS customer_id,COALESCE(SUM(o.total_cents),0) AS total_cents FROM customers c LEFT JOIN orders o ON o.customer_id=c.id AND o.status='paid' GROUP BY c.id) SELECT customer_id,total_cents,ROUND(100.0*total_cents/NULLIF(SUM(total_cents) OVER (),0),2) AS revenue_pct FROM spend
+  - id: overlapping-subscriptions
+    title: Overlapping subscription pairs
+    difficulty: advanced
+    tags: [joins, dates, interviews]
+    prompt: Return customer_id, first_subscription_id, second_subscription_id for each overlapping pair of subscriptions owned by the same customer. Require first ID < second ID to avoid mirrored duplicates. Intervals are half-open; touching endpoints do not overlap. NULL end is unbounded. Row order is not graded.
+    columns: [customer_id, first_subscription_id, second_subscription_id]
+    hints: [Self-join by customer with first ID less than second ID., Intervals overlap when each start precedes the other end; COALESCE unbounded ends to 9999-12-31.]
+    solutions:
+      shared: SELECT a.customer_id,a.id AS first_subscription_id,b.id AS second_subscription_id FROM subscriptions a JOIN subscriptions b ON a.customer_id=b.customer_id AND a.id<b.id WHERE a.started_on<COALESCE(b.ended_on,'9999-12-31') AND b.started_on<COALESCE(a.ended_on,'9999-12-31')
+  - id: median-order-value
+    title: Median paid-order value without a median function
+    difficulty: advanced
+    tags: [windows, statistics, interviews]
+    prompt: Return customer_id and median_cents for each customer with paid orders. For even counts average the middle two values; for odd counts use the middle value. Round to two decimal places. Do not use a built-in MEDIAN or percentile function. Row order is not graded.
+    columns: [customer_id, median_cents]
+    hints: [Assign ROW_NUMBER ordered by total_cents then id and count rows per customer., The middle positions are FLOOR((n+1)/2.0) and FLOOR((n+2)/2.0). Average the qualifying rows.]
+    solutions:
+      shared: WITH ranked AS (SELECT customer_id,total_cents,ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY total_cents,id) AS position,COUNT(*) OVER (PARTITION BY customer_id) AS n FROM orders WHERE status='paid') SELECT customer_id,ROUND(AVG(total_cents),2) AS median_cents FROM ranked WHERE position IN (FLOOR((n+1)/2.0),FLOOR((n+2)/2.0)) GROUP BY customer_id
+  - id: all-categories
+    title: Customers who bought from every product category
+    difficulty: advanced
+    tags: [subqueries, interviews, relational-division]
+    prompt: Return customer_id for customers who bought at least one item from every category in products through paid orders. Product categories with no sales still count. Under an empty product catalog every customer qualifies (vacuous truth). Row order is not graded.
+    columns: [customer_id]
+    hints: [Think of customers for whom no unpurchased category exists., Use nested NOT EXISTS or compare distinct purchased-category counts to all catalog categories.]
+    solutions:
+      shared: SELECT c.id AS customer_id FROM customers c WHERE NOT EXISTS (SELECT 1 FROM products p WHERE NOT EXISTS (SELECT 1 FROM orders o JOIN order_items i ON i.order_id=o.id JOIN products bought ON bought.id=i.product_id WHERE o.customer_id=c.id AND o.status='paid' AND bought.category=p.category))

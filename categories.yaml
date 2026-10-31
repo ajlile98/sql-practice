@@ -1,0 +1,35 @@
+version: 1
+context_tags: [interviews]
+categories:
+  - id: fundamentals
+    label: Fundamentals
+    description: Filtering, expressions and handling values.
+    tags: [filtering, sorting, expressions, nulls, strings, conditional-logic]
+  - id: joins
+    label: Joins and Relationships
+    description: Combining rows and reasoning about related records.
+    tags: [joins, anti-joins, relational-division]
+  - id: aggregation
+    label: Aggregation and Statistics
+    description: Summarizing groups and computing statistical measures.
+    tags: [aggregation, statistics]
+  - id: query-composition
+    label: Query Composition
+    description: Composing queries with subqueries, CTEs and set operations.
+    tags: [ctes, subqueries, set-operations, recursion]
+  - id: windows
+    label: Windows and Sequences
+    description: Ranking, running calculations and sequence patterns.
+    tags: [windows, ranking, gaps-islands]
+  - id: dates
+    label: Dates and Time
+    description: Date arithmetic, boundaries and time-series queries.
+    tags: [dates, date-arithmetic, time-series]
+  - id: analytics
+    label: Analytics Patterns
+    description: Retention, cohorts, funnels and segmentation.
+    tags: [retention, cohorts, funnels, segmentation]
+  - id: data-quality
+    label: Data Quality
+    description: Deduplication, reconciliation and validation.
+    tags: [data-quality, deduplication, reconciliation]

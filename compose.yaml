@@ -1,0 +1,32 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    profiles: [postgres]
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?local credentials required}
+    ports: ['127.0.0.1:${PG_PORT:-55432}:5432']
+    volumes: [postgres_data:/var/lib/postgresql/data]
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U postgres]
+      interval: 2s
+      timeout: 3s
+      retries: 45
+    mem_limit: 512m
+  mysql:
+    image: mysql:8.4
+    profiles: [mysql]
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?local credentials required}
+      MYSQL_ROOT_HOST: '%'
+    command: [--local-infile=0, --secure-file-priv=NULL]
+    ports: ['127.0.0.1:${MYSQL_PORT:-53306}:3306']
+    volumes: [mysql_data:/var/lib/mysql]
+    healthcheck:
+      test: [CMD-SHELL, 'mysqladmin ping -h localhost --silent']
+      interval: 2s
+      timeout: 3s
+      retries: 60
+    mem_limit: 768m
+volumes:
+  postgres_data:
+  mysql_data:
