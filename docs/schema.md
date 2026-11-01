@@ -1,5 +1,8 @@
 # Business Dataset
 
+This guide describes dataset `business`. Exercises using the independent
+`revenue` dataset link to its [schema guide](../datasets/revenue/schema.md).
+
 All IDs are integer primary keys. Foreign keys are enforced at load time. Money is
 integer cents. Dates are calendar dates with no timezone; any future timestamp seeds
 must use a documented UTC convention. Dataset version: 1. Fixed as-of: 2025-03-01.

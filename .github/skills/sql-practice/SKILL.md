@@ -13,7 +13,7 @@ Run commands from the repository root, or set `SQL_PRACTICE_ROOT` to it.
 Never connect to production or accept arbitrary external database URLs.
 Do not install this skill outside the repository unless explicitly requested.
 
-Do not read `exercises/bank.yaml`: it contains all reference solutions and hints.
+Do not read `exercises/bank.yaml` during routine tutoring: it contains all reference solutions and hints.
 Do not read the grader's private fixture files during routine tutoring.
 Do not write or replace the learner's answer unless explicitly asked for a worked solution.
 Hints and solutions require an explicit learner request. A failed check is not permission
@@ -45,8 +45,10 @@ this is an open, personal practice repository.
 6. `start` provisions only the selected local service and creates a session. Explain
    the local action before executing. If Docker is stopped, ask the learner to start
    Docker Desktop or explicitly select SQLite; do not silently switch engines.
-7. Read ONLY the generated `prompt.md` and `docs/schema.md`. Surface the prompt,
-   engine, required columns/order, and generated `answer.sql` path. Then wait for work.
+7. Read ONLY the generated `prompt.md` and the schema guide it links. `business`
+   uses `docs/schema.md`; other datasets use `datasets/<dataset-id>/schema.md`.
+   Surface the prompt, engine, dataset/as-of, required columns/order, and generated
+   `answer.sql` path. Then wait for work.
 
 ## Resume and Administer
 
@@ -54,6 +56,7 @@ this is an open, personal practice repository.
   `--session SESSION_ID` selects another existing session for every practice command.
   Starting again creates a NEW session, so use `resume` when continuing.
 - For multi-question sessions, specify `--question EXERCISE_ID` on run/check/hint/solution.
+   Questions may use different datasets; the CLI routes each question to its own data.
 - Preview: `uv run sql-practice run`; results use the stable exploratory sandbox.
 - Grade on request: `uv run sql-practice check`. Exit 1 means incorrect or failed SQL;
   summarize actual fixture feedback, not a guessed assessment. Do not edit the answer.
@@ -91,7 +94,11 @@ preserve active sessions; actual exercise changes follow the authoring workflow.
 
 After failures, explain the observed mismatch and ask the learner to revise. Do not
 fabricate CLI results or report a pass when a check was not run. If data/bank changes
-make a session stale, preserve its files and explain the error. A destructive
+make a session stale, preserve its files and explain the error. New sessions check
+only the selected question's exercise/dataset versions. Unrelated additions do not
+invalidate it. Start a new session for changed content; dataset versions have separate
+sandboxes and do not require volume resets. Legacy manifests retain conservative
+bank-wide checks; do not silently migrate or promise compatibility for them. A destructive
 `db reset --engine ENGINE` requires explicit approval; do not bypass confirmation
 with `--yes` on the learner's behalf. Reset preserves answers/history but deletes
 the selected project's database volume. `db down --engine ENGINE` stops without deleting.
@@ -102,4 +109,10 @@ Normal requests select from the reviewed bank; do not improvise unvalidated exer
 If the learner explicitly asks to add new exercises, follow `docs/exercise-authoring.md`,
 author original questions, add independently checked anchors and known-wrong queries,
 and run `uv run sql-practice validate-bank --all-engines`. Report untested engines.
+Declare each exercise's dataset, defaulting to `business` only when its data fits.
+Create a new independent dataset when different data is needed; do not extend another
+exercise set's shared fixtures to fit it. With explicit authoring permission, inspect
+only the bank format and fixtures needed for authoring/validation, never to reveal
+unrequested solutions. Define date intervals precisely; completed-day windows
+exclude the fixed as-of day. Do not rewrite existing session files or learner answers.
 Do not require an external model API or credentials for ordinary practice.

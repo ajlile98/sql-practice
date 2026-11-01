@@ -1,5 +1,6 @@
 """Database Adapter contract and bounded, read-only execution."""
 
+import hashlib
 import secrets
 import sqlite3
 import time
@@ -69,7 +70,8 @@ class SQLiteBackend:
 
     @contextmanager
     def _open(self, dataset: Dataset, persistent: bool = False):
-        file_path = self.directory / "sandbox.sqlite" if persistent and self.directory else None
+        filename = f"sandbox_{sandbox_name(dataset)}.sqlite" if dataset.identity else "sandbox.sqlite"
+        file_path = self.directory / filename if persistent and self.directory else None
         if file_path:
             file_path.parent.mkdir(parents=True, exist_ok=True)
         existing = file_path is not None and file_path.exists()
@@ -117,6 +119,13 @@ class SQLiteBackend:
         return self._open(dataset, persistent=True)
 
 
+def sandbox_name(dataset: Dataset) -> str:
+    return (
+        "practice_" + hashlib.sha256(dataset.identity.encode()).hexdigest()[:20]
+        if dataset.identity else "practice_sandbox"
+    )
+
+
 class ServerBackend:
     def __init__(self, engine: str, password: str, port: int):
         self.kind = engine
@@ -145,7 +154,7 @@ class ServerBackend:
     @contextmanager
     def _open(self, dataset: Dataset, persistent: bool = False):
         postgres = self.kind == "postgres"
-        name = "practice_sandbox" if persistent else "practice_" + secrets.token_hex(8)
+        name = sandbox_name(dataset) if persistent else "practice_" + secrets.token_hex(8)
         user = name + "_r"
         password = self.password if persistent else secrets.token_hex(24)
         admin = self._engine(

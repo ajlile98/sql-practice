@@ -33,7 +33,7 @@ class SessionStore:
             raise ValueError("Invalid session ID")
         return self.directory / "sessions" / session_id
 
-    def create(self, exercises, engine, version, seed):
+    def create(self, exercises, engine, version, seed, *, bindings=None):
         session = {
             "id": uuid.uuid4().hex[:12],
             "engine": engine,
@@ -44,15 +44,27 @@ class SessionStore:
             "solutions": [],
         }
         folder = self._folder(session["id"])
+        if bindings is not None:
+            session["format"] = 2
+            session["bindings"] = bindings
         for item in exercises:
             directory = folder / item.id
             directory.mkdir(parents=True)
-            schema_link = Path(os.path.relpath(self.root / "docs/schema.md", directory)).as_posix()
+            schema_path = (
+                self.root / "docs/schema.md" if item.dataset == "business"
+                else self.root / "datasets" / item.dataset / "schema.md"
+            )
+            schema_link = Path(os.path.relpath(schema_path, directory)).as_posix()
+            schema_label = "Business schema" if item.dataset == "business" else f"{item.dataset} schema"
+            dataset_info = ""
+            if bindings is not None:
+                binding = bindings[item.id]
+                dataset_info = f"Dataset: {item.dataset}\n\nAs-of: {binding['as_of']}\n\n"
             (directory / "answer.sql").write_text("-- Write one SELECT or WITH query here.\n")
             (directory / "prompt.md").write_text(
                 f"# {item.title}\n\n{item.prompt}\n\n"
                 f"Engine: {engine}\n\nColumns: {', '.join(item.columns)}\n\n"
-                f"Schema: [Business schema]({schema_link}).\n"
+                f"{dataset_info}Schema: [{schema_label}]({schema_link}).\n"
             )
         self.save(session)
         state = self._state()

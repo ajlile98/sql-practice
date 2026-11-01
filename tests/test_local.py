@@ -15,6 +15,151 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.mark.integration
+def test_scoped_sessions_mixed_datasets_and_unrelated_changes(tmp_path):
+    import shutil
+    from dataclasses import replace
+
+    from sql_practice.database import SQLiteBackend
+    from sql_practice.datasets import dataset_version, load_dataset
+    from sql_practice.practice import PracticeService
+
+    shutil.copytree(ROOT / "datasets/business", tmp_path / "datasets/business")
+    shutil.copytree(ROOT / "datasets/business", tmp_path / "datasets/other")
+    orders = tmp_path / "datasets/other/tables/orders.csv"
+    orders.write_text(orders.read_text().replace("paid,5000\n", "paid,5001\n", 1))
+    other_doc = tmp_path / "datasets/other/schema.md"
+    other_doc.write_text("# Other schema\n")
+    question = load_bank(ROOT)[0]
+    other = replace(question, id="other-spending", dataset="other")
+    store = SessionStore(tmp_path)
+    store.save_sandbox_version("sqlite", "obsolete-global-version")
+    facade = PracticeService(
+        [question, other], "global1", store,
+        lambda _engine: SQLiteBackend(store.directory),
+        lambda fixture, *, name: load_dataset(tmp_path, fixture, name=name),
+        dataset_versions=lambda name: dataset_version(tmp_path, name),
+    )
+    session = facade.start(engine="sqlite", count=2)
+    assert session["format"] == 2
+    paths = store.paths(session)
+    for item in (question, other):
+        Path(paths[item.id], "answer.sql").write_text(item.sql("sqlite"))
+        result = facade.run(question=item.id)
+        assert dict(result.rows)[1] == (11000 if item.dataset == "business" else 11001)
+        assert facade.check(question=item.id)["passed"]
+    manifest = (store._folder(session["id"]) / "session.json").read_bytes()
+    assert "../../../../datasets/other/schema.md" in Path(paths[other.id], "prompt.md").read_text()
+    facade.version = "global2"
+    facade.bank.append(replace(question, id="unrelated"))
+    assert facade.run(question=question.id).rows
+    other_doc.write_text("# Changed documentation only\n")
+    assert facade.run(question=other.id).rows
+    facade.bank[1] = replace(other, prompt="Changed business rule")
+    with pytest.raises(ValueError, match="Exercise other-spending changed"):
+        facade.run(question=other.id)
+    assert facade.run(question=question.id).rows
+    facade.bank[1] = other
+    table = tmp_path / "datasets/other/tables/customers.csv"
+    table.write_text(table.read_text().replace("Ada", "Another name"))
+    with pytest.raises(ValueError, match="Dataset other changed"):
+        facade.run(question=other.id)
+    assert facade.run(question=question.id).rows
+    facade.start(engine="sqlite", identifier=other.id)
+    assert len(list(store.directory.glob("sandbox*.sqlite"))) == 3
+    assert (store._folder(session["id"]) / "session.json").read_bytes() == manifest
+    assert Path(paths[question.id], "answer.sql").read_text() == question.sql("sqlite")
+
+
+@pytest.mark.integration
+def test_revenue_cli_session_schema_and_original_request(tmp_path, monkeypatch):
+    import shutil
+
+    shutil.copytree(ROOT / "exercises", tmp_path / "exercises")
+    shutil.copytree(ROOT / "datasets", tmp_path / "datasets")
+    shutil.copyfile(ROOT / "categories.yaml", tmp_path / "categories.yaml")
+    monkeypatch.setenv("SQL_PRACTICE_ROOT", str(tmp_path))
+    runner = CliRunner()
+    exercise_id = "customer-product-revenue-windows"
+    started = runner.invoke(app, ["start", "--engine", "sqlite", "--exercise", exercise_id, "--no-open"])
+    assert started.exit_code == 0, started.output
+    document = json.loads(started.output)
+    assert document["session"]["bindings"][exercise_id]["dataset"] == "revenue"
+    folder = Path(document["paths"][exercise_id])
+    schema_link = "../../../../datasets/revenue/schema.md"
+    prompt = (folder / "prompt.md").read_text()
+    assert schema_link in prompt and (folder / schema_link).is_file()
+    assert "Dataset: revenue" in prompt and "As-of: 2025-03-01" in prompt
+    assert (folder / "answer.sql").read_text() == "-- Write one SELECT or WITH query here.\n"
+    question = next(item for item in load_bank(tmp_path) if item.id == exercise_id)
+    (folder / "answer.sql").write_text(question.sql("sqlite"))
+    preview = runner.invoke(app, ["run", "--json"])
+    assert preview.exit_code == 0, preview.output
+    assert json.loads(preview.output)["rows"][0] == [1, 1, 2000, 4000]
+    checked = runner.invoke(app, ["check", "--json"])
+    assert checked.exit_code == 0, checked.output
+    assert json.loads(checked.output)["passed"]
+
+
+@pytest.mark.integration
+def test_dataset_ids_and_semantic_exercise_hash(tmp_path):
+    import shutil
+    from dataclasses import replace
+
+    from sql_practice.datasets import dataset_version, load_dataset
+    from sql_practice.exercises import exercise_version
+
+    for name in ("../business", "Bad", "business/other", "", None):
+        with pytest.raises(ValueError, match="Invalid dataset"):
+            load_dataset(tmp_path, name=name)
+    with pytest.raises(ValueError, match="Unknown dataset"):
+        load_dataset(tmp_path, name="missing")
+    shutil.copytree(ROOT / "datasets/business", tmp_path / "datasets/business")
+    parsed = load_dataset(tmp_path)
+    assert parsed.name == "business" and parsed.as_of == "2025-03-01"
+    assert parsed.identity == load_dataset(tmp_path, "edge").identity
+    version = dataset_version(tmp_path)
+    (tmp_path / "datasets/business/schema.md").write_text("Documentation\n")
+    assert dataset_version(tmp_path) == version
+    item = load_bank(ROOT)[0]
+    assert exercise_version(item) == exercise_version(replace(item, solutions=dict(reversed(list(item.solutions.items())))))
+    assert exercise_version(item) != exercise_version(replace(item, prompt="Different"))
+
+
+@pytest.mark.integration
+def test_compatible_legacy_session_uses_original_sandbox(tmp_path):
+    import shutil
+
+    from sql_practice.database import SQLiteBackend
+    from sql_practice.datasets import dataset_version, load_dataset
+    from sql_practice.practice import PracticeService
+
+    shutil.copytree(ROOT / "datasets/business", tmp_path / "datasets/business")
+    store = SessionStore(tmp_path)
+    question = load_bank(ROOT)[0]
+    session = store.create([question], "sqlite", "legacy-version", 1)
+    answer = Path(store.paths(session)[question.id]) / "answer.sql"
+    answer.write_text(question.sql("sqlite"))
+    store.save_sandbox_version("sqlite", "legacy-version")
+    backend = SQLiteBackend(store.directory)
+    legacy_data = load_dataset(tmp_path)
+    legacy_data.identity = ""
+    with backend.sandbox(legacy_data):
+        pass
+    facade = PracticeService(
+        [question], "legacy-version", store, lambda _engine: backend,
+        lambda fixture, *, name: load_dataset(tmp_path, fixture, name=name),
+        dataset_versions=lambda name: dataset_version(tmp_path, name),
+    )
+    assert facade.run().rows[0] == (1, 11000)
+    assert facade.check()["passed"]
+    assert list(store.directory.glob("sandbox*.sqlite")) == [store.directory / "sandbox.sqlite"]
+    facade.version = "changed-bank"
+    with pytest.raises(ValueError, match="changed"):
+        facade.run()
+    assert answer.read_text() == question.sql("sqlite")
+
+
+@pytest.mark.integration
 def test_seen_exercises_include_unchecked_sessions_and_legacy_checks_without_writes(tmp_path):
     store = SessionStore(tmp_path)
     assert store.seen_exercises() == set()
@@ -171,6 +316,7 @@ def test_category_edits_preserve_sessions_and_progress_is_read_only(tmp_path, mo
     import yaml
 
     shutil.copytree(ROOT / "exercises", tmp_path / "exercises")
+    shutil.copytree(ROOT / "datasets", tmp_path / "datasets")
     shutil.copyfile(ROOT / "categories.yaml", tmp_path / "categories.yaml")
     version = content_version(tmp_path)
     question = load_bank(tmp_path)[0]

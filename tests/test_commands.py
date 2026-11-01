@@ -206,7 +206,10 @@ def opening_cli_fixture(monkeypatch):
     store = Mock()
     session = {"id": "example", "exercises": ["first", "second"]}
     files = {
-        question: {"prompt.md": f"/project with spaces/{question}/prompt.md"}
+        question: {
+            filename: f"/project with spaces/{question}/{filename}"
+            for filename in ("prompt.md", "answer.sql")
+        }
         for question in session["exercises"]
     }
     store.get.return_value = session
@@ -428,7 +431,7 @@ def test_start_rejects_mixed_batch_before_starting_database(opening_cli, monkeyp
 
 
 @pytest.mark.parametrize("command", [["start", "--count", "2"], ["resume"]])
-def test_start_and_resume_open_all_prompts_by_default(opening_cli, command):
+def test_start_and_resume_open_prompts_and_answers_by_default(opening_cli, command):
     store, launcher = opening_cli
     result = CliRunner().invoke(cli.app, command)
     assert result.exit_code == 0, result.output
@@ -437,7 +440,9 @@ def test_start_and_resume_open_all_prompts_by_default(opening_cli, command):
         "/bin/code",
         "--reuse-window",
         "/project with spaces/first/prompt.md",
+        store.files.return_value["first"]["answer.sql"],
         "/project with spaces/second/prompt.md",
+        store.files.return_value["second"]["answer.sql"],
     ]
     assert launcher.call_args.kwargs["timeout"] == 10
     assert "shell" not in launcher.call_args.kwargs
@@ -501,7 +506,7 @@ def test_validate_bank_dispatch_and_mismatches_with_fake_backend(monkeypatch):
     local.backend.return_value = FakeBackend()
     monkeypatch.setattr(cli, "environment", lambda: local)
     monkeypatch.setattr(cli, "project_root", lambda: Path("/fake"))
-    monkeypatch.setattr(cli, "load_dataset", lambda _root, _fixture: object())
+    monkeypatch.setattr(cli, "load_dataset", lambda _root, _fixture, **_kwargs: object())
     monkeypatch.setattr(cli, "load_bank", lambda _root: [question])
     runner = CliRunner()
     result = runner.invoke(cli.app, ["validate-bank", "--all-engines"])
@@ -519,4 +524,4 @@ def test_validate_bank_dispatch_and_mismatches_with_fake_backend(monkeypatch):
 def test_sqlite_validate_command():
     result = CliRunner().invoke(cli.app, ["validate-bank"])
     assert result.exit_code == 0, result.output
-    assert "80 reference executions" in result.output
+    assert "104 reference executions" in result.output

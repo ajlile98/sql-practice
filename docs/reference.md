@@ -4,7 +4,7 @@ See the [README](../README.md) for a quick introduction, prerequisites, and usag
 
 A local SQL workbench for analytics, data engineering, and interview practice.
 Edit answers in VS Code, grade in the terminal, or ask Copilot to administer exercises.
-Includes **20 original exercises: 12 intermediate and 8 advanced**, on PostgreSQL,
+Includes **26 original exercises: 15 intermediate and 11 advanced**, on PostgreSQL,
 MySQL, and SQLite. Terminal practice needs no web server or external AI API.
 An optional local Streamlit dashboard visualizes saved statistics.
 
@@ -33,7 +33,7 @@ uv run sql-practice progress
 ```
 
 Both `start` and `resume` print a `files` section with explicit `prompt.md` and
-`answer.sql` paths for each exercise. They also open the prompt files in the current
+`answer.sql` paths for each exercise. They also open both files in the current
 VS Code window using `code --reuse-window`. Write your SQL in the answer file.
 Use `--no-open` for terminal-only use or scripts; `--open` explicitly enables opening.
 If the `code` command is unavailable or fails, the session still succeeds with a
@@ -43,8 +43,10 @@ The `paths` section lists the containing folders;
 it is not a list of individual files. Use `resume` to redisplay paths without creating
 a new session or overwriting answers.
 
-Generated prompts include a relative **Business schema** link to the table and
-relationship guide, usable directly from the prompt in VS Code or Markdown preview.
+Generated prompts identify the dataset and fixed as-of date, and link its schema
+guide using a relative path usable from VS Code or Markdown preview. Existing
+exercises default to `business`; six revenue exercises use the independent
+[revenue schema](../datasets/revenue/schema.md).
 
 For a no-Docker start:
 
@@ -71,7 +73,8 @@ uv run sql-practice check --session SESSION_ID --question EXERCISE_ID
 
 Tags include `joins`, `aggregation`, `anti-joins`, `ctes`, `windows`, `ranking`,
 `deduplication`, `dates`, `retention`, `gaps-islands`, `data-quality`, `subqueries`,
-`statistics`, `relational-division`, and `interviews`. Filters are exact and never
+`statistics`, `relational-division`, `date-arithmetic`, `time-series`,
+`conditional-logic`, and `interviews`. Filters are exact and never
 silently broadened. Explicit IDs cannot be combined with topic/difficulty/category/count.
 
 Without filters, selection is random across intermediate/advanced exercises and
@@ -302,8 +305,23 @@ Fixtures cover missing relationships, duplicate attempts, tied rankings, same-da
 orders, NULL regions/end dates, leap dates, and zero/absent revenue. Date questions
 use fixed dates, not the current clock. References have explicit dialect variants
 where necessary. Same data does not mean every SQL expression is portable.
-Bank/dataset changes invalidate old session grading and require a sandbox reset;
-old SQL files are retained for manual migration into a new session.
+New session manifests bind each question to its own semantic exercise fingerprint
+and dataset fingerprint. Adding or changing an unrelated exercise/dataset does not
+invalidate that question. Editing the selected exercise or its dataset reports a
+targeted stale-session error; old files remain for manual migration to a new session.
+Mixed-dataset batches route each question to the right base sandbox and fixtures.
+
+Persistent sandboxes are keyed by dataset ID and dataset content fingerprint,
+separately per engine. Exercises with the same dataset/version share a sandbox;
+new dataset versions create separate sandboxes without a volume reset. Reference
+or prompt edits never require reseeding a sandbox. Schema documentation changes
+do not change dataset fingerprints; fixture data changes do. Old versions may
+accumulate until an explicitly approved engine reset; automatic cleanup is not added.
+
+Legacy manifests without per-question bindings remain readable and retain their
+original bank-wide compatibility checks. They are not silently migrated or
+declared compatible after bank changes. Legacy answers/history and databases are
+preserved; newly started sessions do not depend on the legacy sandbox marker.
 
 Each query is one statement, with read-only roles/SQLite authorization, a 3-second
 query deadline, and a 10,000-row cap. PostgreSQL uses statement timeout; SQLite uses
@@ -323,6 +341,12 @@ Uses SQLAlchemy Core, Typer, PyYAML, and small explicit contracts:
 - **Strategy:** interchangeable seeded/explicit selection and ordered/multiset comparison.
 - **Facade:** `PracticeService` coordinates sessions, checks, assistance, and progress.
 - **Composition:** the CLI constructs dependencies; no singleton state or plugin framework.
+
+`Exercise.dataset` selects a safe repository-owned dataset ID, defaulting to
+`business`. `load_dataset` validates that dataset's schema and fixtures; the
+backend uses its identity to choose the persistent file/database. `validate-bank`
+groups references by dataset and fixture, compares each engine to the corresponding
+SQLite baseline, and retains independently reasoned anchors in tests.
 
 Add an engine by implementing the backend contract, registering its constructor and
 engine name, extending local setup, and testing dialect references. Add a comparison

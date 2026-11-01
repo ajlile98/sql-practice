@@ -61,3 +61,19 @@ def test_server_persistent_sandbox_and_reference(engine):
                 ),
                 result,
             ).passed
+
+
+@pytest.mark.parametrize("engine", ["postgres", "mysql"])
+def test_server_dataset_identity_isolates_and_reuses_sandboxes(engine):
+    from sql_practice.database import sandbox_name
+
+    backend = LocalEnvironment(ROOT).backend(engine)
+    business = load_dataset(ROOT)
+    revenue = load_dataset(ROOT, name="revenue")
+    assert sandbox_name(business) != sandbox_name(revenue)
+    assert len(sandbox_name(revenue) + "_r") <= 32
+    for dataset, count in ((business, 6), (revenue, 8), (business, 6), (revenue, 8)):
+        with backend.sandbox(dataset) as connection:
+            assert connection.query("SELECT COUNT(*) AS n FROM customers").rows == ((count,),)
+            with pytest.raises(ValueError):
+                connection.query("DELETE FROM customers")

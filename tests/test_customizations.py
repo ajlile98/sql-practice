@@ -15,6 +15,8 @@ def test_repository_skill_and_tasks_contract():
     assert skill["name"] == file_path.parent.name
     assert "SQL practice" in skill["description"]
     assert skill.get("user-invocable", True)
+    assert "the schema guide it links" in file_path.read_text()
+    assert "different datasets" in file_path.read_text()
     tasks = json.loads((ROOT / ".vscode/tasks.json").read_text())
     assert all(task["type"] == "process" and task["command"] == "uv" for task in tasks["tasks"])
     workflow = yaml.load((ROOT / ".github/workflows/test.yml").read_text(), Loader=yaml.BaseLoader)

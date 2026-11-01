@@ -66,3 +66,24 @@ def test_sqlite_timeout():
             "WITH RECURSIVE numbers(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM numbers) SELECT sum(n) FROM numbers",
             timeout=0.001,
         )
+
+
+@pytest.mark.integration
+def test_named_sandboxes_isolate_and_reuse_versions(tmp_path):
+    from sql_practice.database import sandbox_name
+
+    backend = SQLiteBackend(tmp_path)
+    original = dataset()
+    original.identity = "one_version1"
+    other = dataset()
+    other.identity = "two_version1"
+    other.rows["people"] = []
+    updated = dataset()
+    updated.identity = "one_version2"
+    updated.rows["people"] = []
+    for parsed, count in ((original, 2), (other, 0), (updated, 0), (original, 2)):
+        with backend.sandbox(parsed) as connection:
+            assert connection.query("SELECT COUNT(*) AS n FROM people").rows == ((count,),)
+    assert len(list(tmp_path.glob("sandbox*.sqlite"))) == 3
+    assert len(sandbox_name(original) + "_r") <= 32
+    assert sandbox_name(original) != sandbox_name(updated)

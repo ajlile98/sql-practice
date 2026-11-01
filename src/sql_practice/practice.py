@@ -4,7 +4,13 @@ from collections.abc import Callable
 
 from sql_practice.database import DatabaseBackend
 from sql_practice.datasets import FIXTURES
-from sql_practice.exercises import Categories, Exercise, select_exercises, solved_exercises
+from sql_practice.exercises import (
+    Categories,
+    Exercise,
+    exercise_version,
+    select_exercises,
+    solved_exercises,
+)
 from sql_practice.grading import compare_results
 from sql_practice.progress import learning_progress
 
@@ -21,6 +27,7 @@ class PracticeService:
         selection_strategy=None,
         comparison_factory=None,
         categories: Categories | None = None,
+        dataset_versions=None,
     ):
         self.bank = bank
         self.version = version
@@ -30,6 +37,12 @@ class PracticeService:
         self.selection_strategy = selection_strategy
         self.comparison_factory = comparison_factory or (lambda _exercise: None)
         self.categories = categories or Categories()
+        self.dataset_versions = dataset_versions
+
+    def _dataset(self, fixture, name):
+        if self.dataset_versions is None:
+            return self.dataset_loader(fixture)
+        return self.dataset_loader(fixture, name=name)
 
     def start(self, *, engine="postgres", seed=None, **filters):
         solved = solved_exercises(self.store.attempts())
@@ -43,15 +56,33 @@ class PracticeService:
             categories=self.categories,
             **filters,
         )
-        self.store.assert_sandbox_version(engine, self.version)
-        with self.backend_factory(engine).sandbox(self.dataset_loader("base")):
-            pass
-        self.store.save_sandbox_version(engine, self.version)
-        return self.store.create(selected, engine, self.version, seed)
+        if self.dataset_versions is None:
+            self.store.assert_sandbox_version(engine, self.version)
+            with self.backend_factory(engine).sandbox(self.dataset_loader("base")):
+                pass
+            self.store.save_sandbox_version(engine, self.version)
+            return self.store.create(selected, engine, self.version, seed)
+        datasets = {}
+        backend = self.backend_factory(engine)
+        for item in selected:
+            if item.dataset not in datasets:
+                dataset = self._dataset("base", item.dataset)
+                with backend.sandbox(dataset):
+                    pass
+                datasets[item.dataset] = dataset
+        bindings = {
+            item.id: {
+                "exercise_version": exercise_version(item),
+                "dataset": item.dataset,
+                "dataset_version": self.dataset_versions(item.dataset),
+                "as_of": datasets[item.dataset].as_of,
+            } for item in selected
+        }
+        return self.store.create(selected, engine, self.version, seed, bindings=bindings)
 
     def _context(self, session_id=None, question=None):
         session = self.store.get(session_id)
-        if session["version"] != self.version:
+        if "bindings" not in session and session["version"] != self.version:
             raise ValueError(
                 "Dataset or exercise bank changed; start a new session (old answers are preserved)"
             )
@@ -63,16 +94,28 @@ class PracticeService:
             question = session["exercises"][0]
         if question not in session["exercises"]:
             raise ValueError("Exercise is not in this session")
-        exercise = next(item for item in self.bank if item.id == question)
+        exercise = next((item for item in self.bank if item.id == question), None)
+        if exercise is None:
+            raise ValueError("Exercise was removed; old answers are preserved")
+        if "bindings" in session:
+            binding = session["bindings"][question]
+            if binding["exercise_version"] != exercise_version(exercise):
+                raise ValueError(f"Exercise {question} changed; start a new session (old answers are preserved)")
+            if self.dataset_versions is None or binding["dataset"] != exercise.dataset or (
+                binding["dataset_version"] != self.dataset_versions(exercise.dataset)
+            ):
+                raise ValueError(f"Dataset {exercise.dataset} changed; start a new session (old answers are preserved)")
         return session, exercise
 
     def run(self, session_id=None, question=None):
         session, exercise = self._context(session_id, question)
         sql = self.store.answer(session["id"], exercise.id)
-        self.store.assert_sandbox_version(session["engine"], self.version)
-        with self.backend_factory(session["engine"]).sandbox(
-            self.dataset_loader("base")
-        ) as connection:
+        dataset = self._dataset("base", exercise.dataset)
+        if "bindings" not in session:
+            self.store.assert_sandbox_version(session["engine"], self.version)
+            if hasattr(dataset, "identity"):
+                dataset.identity = ""
+        with self.backend_factory(session["engine"]).sandbox(dataset) as connection:
             return connection.query(sql)
 
     def check(self, session_id=None, question=None):
@@ -82,7 +125,7 @@ class PracticeService:
         cases = []
         for fixture in FIXTURES:
             try:
-                with backend.fixture(self.dataset_loader(fixture)) as connection:
+                with backend.fixture(self._dataset(fixture, exercise.dataset)) as connection:
                     expected = connection.query(exercise.sql(session["engine"]))
                     actual = connection.query(sql)
                     comparison = compare_results(

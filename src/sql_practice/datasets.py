@@ -1,6 +1,7 @@
 """Portable YAML schema and CSV records, validated before database IO."""
 
 import csv
+import hashlib
 import re
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -18,6 +19,34 @@ FIXTURES = ("base", "edge", "empty", "no-sales")
 class Dataset:
     metadata: sa.MetaData
     rows: dict[str, list[dict]]
+    identity: str = ""
+    name: str = "business"
+    as_of: str = ""
+
+
+def dataset_directory(root: Path, name: str) -> Path:
+    if not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*", name):
+        raise ValueError(f"Invalid dataset ID: {name}")
+    directory = root / "datasets" / name
+    if not (directory / "schema.yaml").is_file():
+        raise ValueError(f"Unknown dataset: {name}")
+    if not directory.resolve().is_relative_to((root / "datasets").resolve()):
+        raise ValueError(f"Dataset outside repository: {name}")
+    return directory
+
+
+def dataset_version(root: Path, name: str = "business") -> str:
+    directory = dataset_directory(root, name)
+    digest = hashlib.sha256()
+    paths = [directory / "schema.yaml"]
+    paths.extend(sorted((directory / "tables").glob("*.csv")))
+    paths.extend(sorted((directory / "fixtures").rglob("*.csv")))
+    for file_path in paths:
+        digest.update(file_path.relative_to(directory).as_posix().encode())
+        digest.update(b"\0")
+        digest.update(file_path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
 
 
 def identifier(value: str) -> str:
@@ -115,21 +144,25 @@ def parse_dataset(schema: dict, tables: dict[str, str]) -> Dataset:
     return Dataset(metadata, rows)
 
 
-def load_dataset(root: Path, fixture: str = "base") -> Dataset:
+def load_dataset(root: Path, fixture: str = "base", *, name: str = "business") -> Dataset:
     if fixture not in FIXTURES:
         raise ValueError(f"Unknown fixture: {fixture}")
-    directory = root / "datasets/business"
+    directory = dataset_directory(root, name)
     schema = yaml.safe_load((directory / "schema.yaml").read_text())
     tables = {}
-    for name in schema["tables"]:
-        source = directory / "tables" / f"{name}.csv"
-        override = directory / "fixtures" / fixture / f"{name}.csv"
+    for table_name in schema["tables"]:
+        source = directory / "tables" / f"{table_name}.csv"
+        override = directory / "fixtures" / fixture / f"{table_name}.csv"
         text = (override if override.is_file() else source).read_text()
         omit = fixture == "empty" or (
-            fixture == "no-sales" and name in ("orders", "order_items", "payments")
+            fixture == "no-sales" and table_name in ("orders", "order_items", "payments")
         )
-        tables[name] = text.splitlines()[0] + "\n" if omit else text
-    return parse_dataset(schema, tables)
+        tables[table_name] = text.splitlines()[0] + "\n" if omit else text
+    dataset = parse_dataset(schema, tables)
+    dataset.name = name
+    dataset.as_of = str(schema.get("as_of", ""))
+    dataset.identity = f"{name.replace('-', '_')}_{dataset_version(root, name)[:20]}"
+    return dataset
 
 
 def seed(connection: sa.Connection, dataset: Dataset) -> None:

@@ -106,7 +106,8 @@ class LocalEnvironment:
         if engine not in ENGINES:
             raise ValueError(f"Unknown engine: {engine}")
         if engine == "sqlite":
-            (self.directory / "sandbox.sqlite").unlink(missing_ok=True)
+            for file_path in self.directory.glob("sandbox*.sqlite"):
+                file_path.unlink(missing_ok=True)
         else:
             self.compose("rm", "--stop", "--force", "--volumes", engine)
             volume = f"{self.project}_{engine}_data"

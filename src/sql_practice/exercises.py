@@ -1,13 +1,16 @@
 """Exercise contracts, validation, and selection strategies."""
 
 import hashlib
+import json
 import random
 import re
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Protocol
 
 import yaml
+
+from sql_practice.datasets import dataset_directory
 
 ENGINES = ("sqlite", "postgres", "mysql")
 
@@ -110,6 +113,7 @@ class Exercise:
     solutions: dict[str, str]
     columns: tuple[str, ...]
     ordered: bool
+    dataset: str = "business"
 
     def sql(self, engine: str) -> str:
         return self.solutions.get(engine, self.solutions.get("shared", ""))
@@ -240,7 +244,9 @@ def load_bank(root: Path) -> list[Exercise]:
             record["solutions"],
             tuple(record["columns"]),
             record.get("ordered", False),
+            record.get("dataset", "business"),
         )
+        dataset_directory(root, item.dataset)
         if item.id in identifiers or not item.id.replace("-", "").isalnum():
             raise ValueError(f"Invalid or duplicate exercise ID: {item.id}")
         if item.difficulty not in ("intermediate", "advanced") or not item.tags or not item.hints:
@@ -254,6 +260,12 @@ def load_bank(root: Path) -> list[Exercise]:
     if not result:
         raise ValueError("Exercise bank is empty")
     return result
+
+
+def exercise_version(exercise: Exercise) -> str:
+    return hashlib.sha256(
+        json.dumps(asdict(exercise), sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
 
 
 def content_version(root: Path) -> str:

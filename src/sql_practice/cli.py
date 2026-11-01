@@ -16,7 +16,7 @@ from rich.table import Table
 from rich.text import Text
 from sqlalchemy.exc import SQLAlchemyError
 
-from sql_practice.datasets import FIXTURES, load_dataset
+from sql_practice.datasets import FIXTURES, dataset_version, load_dataset
 from sql_practice.environment import LocalEnvironment, project_root
 from sql_practice.exercises import (
     ENGINES,
@@ -77,15 +77,19 @@ def show_session(store, session, open_prompt):
     executable = shutil.which("code")
     if not executable:
         typer.echo(
-            "Warning: VS Code 'code' command not found. Open the printed prompt paths manually "
+            "Warning: VS Code 'code' command not found. Open the printed file paths manually "
             "or install 'code' in PATH from the VS Code Command Palette. Use --no-open to skip opening.",
             err=True,
         )
         return
-    prompts = [file_paths["prompt.md"] for file_paths in files.values()]
+    editor_files = [
+        file_paths[filename]
+        for file_paths in files.values()
+        for filename in ("prompt.md", "answer.sql")
+    ]
     try:
         result = subprocess.run(
-            [executable, "--reuse-window", *prompts],
+            [executable, "--reuse-window", *editor_files],
             capture_output=True,
             timeout=10,
             check=False,
@@ -94,7 +98,7 @@ def show_session(store, session, open_prompt):
             return
     except (OSError, subprocess.SubprocessError):
         pass
-    typer.echo("Warning: Could not open prompts in VS Code. Use the printed file paths.", err=True)
+    typer.echo("Warning: Could not open files in VS Code. Use the printed file paths.", err=True)
 
 
 def environment():
@@ -109,8 +113,9 @@ def service():
         content_version(root),
         SessionStore(root),
         local.backend,
-        lambda fixture: load_dataset(root, fixture),
+        lambda fixture, *, name="business": load_dataset(root, fixture, name=name),
         categories=load_categories(root),
+        dataset_versions=lambda name: dataset_version(root, name),
     )
 
 
@@ -218,7 +223,7 @@ def start(
     count: int = 1,
     exercise: str | None = None,
     seed: int | None = None,
-    open_prompt: bool = typer.Option(True, "--open/--no-open", help="Open prompts in VS Code."),
+    open_prompt: bool = typer.Option(True, "--open/--no-open", help="Open prompts and answers in VS Code."),
 ):
     """Create a new session; no filters means random unsolved-first practice."""
     practice = service()
@@ -260,7 +265,7 @@ def start(
 @handled
 def resume(
     session: str | None = None,
-    open_prompt: bool = typer.Option(True, "--open/--no-open", help="Open prompts in VS Code."),
+    open_prompt: bool = typer.Option(True, "--open/--no-open", help="Open prompts and answers in VS Code."),
 ):
     """Display an existing session without changing its answer files."""
     store = SessionStore(project_root())
@@ -513,34 +518,43 @@ def validate_bank(engine: str = "sqlite", all_engines: bool = False):
     local = environment()
     bank = load_bank(root)
     selected = ENGINES if all_engines else (engine,)
+    groups = {}
+    for item in bank:
+        groups.setdefault(item.dataset, []).append(item)
     baseline = {}
-    for fixture in FIXTURES:
-        with local.backend("sqlite").fixture(load_dataset(root, fixture)) as connection:
-            for item in bank:
-                result = connection.query(item.sql("sqlite"))
-                if result.columns != item.columns:
-                    raise ValueError(f"Reference column mismatch: {item.id}")
-                if fixture == "base" and not result.rows:
-                    raise ValueError(f"Missing positive base case: {item.id}")
-                baseline[(fixture, item.id)] = result
+    for dataset_name, questions in groups.items():
+        for fixture in FIXTURES:
+            with local.backend("sqlite").fixture(
+                load_dataset(root, fixture, name=dataset_name)
+            ) as connection:
+                for item in questions:
+                    result = connection.query(item.sql("sqlite"))
+                    if result.columns != item.columns:
+                        raise ValueError(f"Reference column mismatch: {item.id}")
+                    if fixture == "base" and not result.rows:
+                        raise ValueError(f"Missing positive base case: {item.id}")
+                    baseline[(fixture, item.id)] = result
     checked = 0
     for selected_engine in selected:
-        for fixture in FIXTURES:
-            with local.backend(selected_engine).fixture(load_dataset(root, fixture)) as connection:
-                for item in bank:
-                    result = connection.query(item.sql(selected_engine))
-                    comparison = compare_results(
-                        baseline[(fixture, item.id)], result, ordered=item.ordered
-                    )
-                    if not comparison.passed:
-                        raise ValueError(
-                            f"{selected_engine}/{fixture}/{item.id}: {comparison.message}"
+        for dataset_name, questions in groups.items():
+            for fixture in FIXTURES:
+                with local.backend(selected_engine).fixture(
+                    load_dataset(root, fixture, name=dataset_name)
+                ) as connection:
+                    for item in questions:
+                        result = connection.query(item.sql(selected_engine))
+                        comparison = compare_results(
+                            baseline[(fixture, item.id)], result, ordered=item.ordered
                         )
-                    if (
-                        fixture == "base"
-                        and compare_results(result, QueryResult(result.columns, ())).passed
-                    ):
-                        raise ValueError(f"Empty wrong answer passed: {item.id}")
-                    checked += 1
+                        if not comparison.passed:
+                            raise ValueError(
+                                f"{selected_engine}/{fixture}/{item.id}: {comparison.message}"
+                            )
+                        if (
+                            fixture == "base"
+                            and compare_results(result, QueryResult(result.columns, ())).passed
+                        ):
+                            raise ValueError(f"Empty wrong answer passed: {item.id}")
+                        checked += 1
         typer.echo(f"{selected_engine}: {len(bank)} exercises x {len(FIXTURES)} fixtures passed")
     typer.echo(f"Validated {checked} reference executions; empty wrong-answer checks passed.")

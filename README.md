@@ -1,6 +1,6 @@
 # SQL Practice
 
-Practice analytics and interview SQL locally with 20 intermediate and advanced
+Practice analytics and interview SQL locally with 26 intermediate and advanced
 exercises for PostgreSQL, MySQL, and SQLite. Write SQL in VS Code, get automatic
 feedback in the terminal, and track progress in a local Streamlit dashboard.
 
@@ -30,8 +30,8 @@ uv run sql-practice start
 uv run sql-practice start --engine sqlite
 ```
 
-Read the generated prompt and [schema guide](docs/schema.md), then edit the
-printed `answer.sql` file. The prompt opens in VS Code when `code` is available.
+Read the generated prompt and its linked dataset schema guide, then edit the
+printed `answer.sql` file. Both files open in VS Code on start/resume when `code` is available.
 
 ```sh
 uv run sql-practice run        # Preview results
@@ -61,9 +61,22 @@ gitignored `.practice/`.
 
 With Copilot, invoke `/sql-practice` or ask for an exercise in chat.
 
+Six revenue exercises share an independent [revenue dataset](datasets/revenue/schema.md),
+covering customer/product totals, completed-day windows, growth, rankings, monthly
+trends, and revenue concentration. Start the original customer/product question:
+
+```sh
+uv run sql-practice start --exercise customer-product-revenue-windows
+```
+
+New sessions bind each question to its dataset and content versions. Unrelated
+exercise changes do not invalidate them; new dataset versions use separate
+sandboxes without deleting database volumes. Existing answers and history remain.
+
 ## More Details
 
 - [Technical reference](docs/reference.md): session behavior, statistics,
   configuration, grading, architecture, tests, and troubleshooting.
 - [Business schema](docs/schema.md)
+- [Revenue schema](datasets/revenue/schema.md)
 - [Exercise authoring](docs/exercise-authoring.md)

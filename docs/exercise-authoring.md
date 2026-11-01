@@ -2,11 +2,18 @@
 
 ## Portable Data
 
-`datasets/business/schema.yaml` declares ordered tables/columns, version, and fixed
+`datasets/<dataset-id>/schema.yaml` declares ordered tables/columns, version, and fixed
 as-of date. A column has `type` (`integer`, `text`, `date`, `timestamp`, `decimal`),
 optional `primary_key`, `nullable` (default false), and `references: table.column`.
 Decimal columns can specify `precision` and `scale`; use exact finite values, not
 binary floats. Text storage is limited to 255 characters on server engines.
+
+Each exercise declares `dataset: revenue` (or another safe lowercase kebab-case
+dataset ID). Omitted dataset IDs default to `business`. Shared datasets are
+intentional dependencies: changing their data affects every exercise that uses
+them. If a new exercise needs different data, create an independent dataset rather
+than modifying another set's fixtures. Place its schema guide at
+`datasets/<dataset-id>/schema.md`; `business` keeps `docs/schema.md`.
 
 Each base table is a UTF-8 CSV with a header exactly matching schema column order.
 Use ISO `YYYY-MM-DD` dates. `\N` is NULL; an empty field is an empty string.
@@ -28,12 +35,21 @@ Add a fixture policy only with loader/contract tests and independently reasoned
 expected results. Fixtures are deterministic; use fixed dates. Keep bank changes
 versioned in Git and never mutate a learner's existing session to hide incompatibility.
 
+New sessions pin the selected exercise's semantic fingerprint and its dataset's
+content fingerprint per question. Unrelated additions do not invalidate them.
+Changing a dependent dataset or exercise reports a targeted stale-session error;
+new starts use separate dataset-version sandboxes without volume resets. Legacy
+sessions retain their original checks and files; do not migrate them automatically.
+Dataset fingerprints include schema/CSV data, not Markdown guides. Bank formatting
+does not affect semantic exercise fingerprints. Mixed-dataset batches are supported.
+
 ## Exercise Records
 
 Add an original record to `exercises/bank.yaml`:
 
 ```yaml
 - id: unique-kebab-id
+  dataset: revenue
   title: A concise title
   difficulty: advanced  # or intermediate
   tags: [windows, dates]
@@ -99,6 +115,9 @@ with a configuration error rather than silently dropping categories.
 ### Exercise Checks
 
 1. Add a failing test or independent expected anchor for the business rule first.
+  Declare exact half-open or inclusive boundaries; a completed-day window excludes
+  the as-of day. Include meaningful boundary cases in exploratory base data, not
+  only the grader's edge fixture.
 2. Add positive and negative fixture cases, including empty inputs, NULLs, duplicates,
    ties, relevant date boundaries, and missing related rows.
 3. Add a plausible incorrect query that fails: e.g. wrong join filter, MAX(id) instead
@@ -106,7 +125,7 @@ with a configuration error rather than silently dropping categories.
 4. Run `uv run pytest` and `uv run sql-practice validate-bank --all-engines` with both
    server containers ready. Do not call an unexecuted dialect verified.
 5. Update README exercise counts/topics and the bank count assertions when expanding
-   beyond the initial 20. Update schema docs when adding/changing tables.
+  beyond the initial 20. Update the selected dataset's schema guide when changing tables.
 
 The CLI validates every reference against all fixtures and compares each dialect to
 SQLite results. This checks dialect agreement but does not independently prove a

@@ -193,3 +193,229 @@ exercises:
     hints: [Think of customers for whom no unpurchased category exists., Use nested NOT EXISTS or compare distinct purchased-category counts to all catalog categories.]
     solutions:
       shared: SELECT c.id AS customer_id FROM customers c WHERE NOT EXISTS (SELECT 1 FROM products p WHERE NOT EXISTS (SELECT 1 FROM orders o JOIN order_items i ON i.order_id=o.id JOIN products bought ON bought.id=i.product_id WHERE o.customer_id=c.id AND o.status='paid' AND bought.category=p.category))
+  - id: revenue-customer-totals
+    dataset: revenue
+    title: Customer revenue over 90 and 365 completed days
+    difficulty: intermediate
+    tags: [joins, aggregation, dates]
+    prompt: >
+      As of 2025-03-01, return every customer with customer_id, revenue_90d_cents,
+      and revenue_365d_cents. Revenue is quantity * unit_price_cents from paid
+      orders, dated by ordered_on, not orders.total_cents. Use the 90 completed
+      days [2024-12-01, 2025-03-01) and 365 completed days [2024-03-01, 2025-03-01).
+      The lower date is included and the as-of date is excluded. Pending and
+      refunded orders contribute nothing. Include zero for customers without
+      qualifying line items. Sort customer_id ascending.
+    ordered: true
+    columns: [customer_id, revenue_90d_cents, revenue_365d_cents]
+    hints:
+      - Preserve customers without matching sales when summarizing revenue.
+      - Aggregate qualifying line items by customer before joining the totals to all customers, and replace missing totals with zero.
+    solutions:
+      shared: |
+        WITH revenue AS (
+          SELECT o.customer_id,
+            SUM(CASE WHEN o.ordered_on >= '2024-12-01' THEN i.quantity*i.unit_price_cents ELSE 0 END) AS revenue_90d_cents,
+            SUM(i.quantity*i.unit_price_cents) AS revenue_365d_cents
+          FROM orders o JOIN order_items i ON i.order_id=o.id
+          WHERE o.status='paid' AND o.ordered_on >= '2024-03-01' AND o.ordered_on < '2025-03-01'
+          GROUP BY o.customer_id
+        )
+        SELECT c.id AS customer_id, COALESCE(r.revenue_90d_cents,0) AS revenue_90d_cents,
+          COALESCE(r.revenue_365d_cents,0) AS revenue_365d_cents
+        FROM customers c LEFT JOIN revenue r ON r.customer_id=c.id
+        ORDER BY c.id
+  - id: customer-product-revenue-windows
+    dataset: revenue
+    title: Product revenue per customer over 90 and 365 completed days
+    difficulty: intermediate
+    tags: [dates, date-arithmetic, aggregation]
+    prompt: >
+      As of 2025-03-01, return customer_id, product_id, revenue_90d_cents, and
+      revenue_365d_cents for every customer/product pair with at least one line
+      item on a paid order within the 365 completed days [2024-03-01, 2025-03-01).
+      Include a qualifying pair even if its line-item revenue is zero. Revenue
+      is quantity * unit_price_cents, dated by ordered_on, not orders.total_cents.
+      The 90 completed days are [2024-12-01, 2025-03-01). Lower dates are included;
+      the as-of date and all later dates are excluded. Pending and refunded
+      orders contribute nothing. Return zero for a pair without qualifying
+      90-day purchases. Sort customer_id ascending, then product_id ascending.
+    ordered: true
+    columns: [customer_id, product_id, revenue_90d_cents, revenue_365d_cents]
+    hints:
+      - Each output group is a customer and product; its two metrics share one observation cutoff.
+      - Filter paid line items to the annual interval and use a conditional sum for the shorter interval. Date arithmetic can derive each start from the fixed as-of date.
+    solutions:
+      sqlite: |
+        SELECT o.customer_id, i.product_id,
+          SUM(CASE WHEN o.ordered_on >= DATE('2025-03-01','-90 day') THEN i.quantity*i.unit_price_cents ELSE 0 END) AS revenue_90d_cents,
+          SUM(i.quantity*i.unit_price_cents) AS revenue_365d_cents
+        FROM orders o JOIN order_items i ON i.order_id=o.id
+        WHERE o.status='paid' AND o.ordered_on >= DATE('2025-03-01','-365 day') AND o.ordered_on < '2025-03-01'
+        GROUP BY o.customer_id, i.product_id
+        ORDER BY o.customer_id, i.product_id
+      postgres: |
+        SELECT o.customer_id, i.product_id,
+          SUM(CASE WHEN o.ordered_on >= DATE '2025-03-01' - 90 THEN i.quantity*i.unit_price_cents ELSE 0 END) AS revenue_90d_cents,
+          SUM(i.quantity*i.unit_price_cents) AS revenue_365d_cents
+        FROM orders o JOIN order_items i ON i.order_id=o.id
+        WHERE o.status='paid' AND o.ordered_on >= DATE '2025-03-01' - 365 AND o.ordered_on < DATE '2025-03-01'
+        GROUP BY o.customer_id, i.product_id
+        ORDER BY o.customer_id, i.product_id
+      mysql: |
+        SELECT o.customer_id, i.product_id,
+          SUM(CASE WHEN o.ordered_on >= DATE_SUB('2025-03-01', INTERVAL 90 DAY) THEN i.quantity*i.unit_price_cents ELSE 0 END) AS revenue_90d_cents,
+          SUM(i.quantity*i.unit_price_cents) AS revenue_365d_cents
+        FROM orders o JOIN order_items i ON i.order_id=o.id
+        WHERE o.status='paid' AND o.ordered_on >= DATE_SUB('2025-03-01', INTERVAL 365 DAY) AND o.ordered_on < '2025-03-01'
+        GROUP BY o.customer_id, i.product_id
+        ORDER BY o.customer_id, i.product_id
+  - id: revenue-product-growth
+    dataset: revenue
+    title: Product revenue growth across adjacent 90-day periods
+    difficulty: intermediate
+    tags: [aggregation, dates, conditional-logic]
+    prompt: >
+      As of 2025-03-01, compare the current 90 completed days [2024-12-01, 2025-03-01)
+      with the immediately preceding 90 days [2024-09-02, 2024-12-01). Return every
+      product with product_id, previous_90d_cents, current_90d_cents, and change_cents
+      (current minus previous). Revenue is quantity * unit_price_cents from paid
+      orders, dated by ordered_on, not orders.total_cents. Lower dates are included;
+      upper dates are excluded. Pending and refunded orders contribute nothing.
+      Return zero for a period without qualifying sales, including unsold products.
+      Sort product_id ascending.
+    ordered: true
+    columns: [product_id, previous_90d_cents, current_90d_cents, change_cents]
+    hints:
+      - Keep both periods the same length and do not count their shared boundary twice.
+      - Summarize paid line items by product using two conditional aggregates, then join those values to the product catalog.
+    solutions:
+      shared: |
+        WITH revenue AS (
+          SELECT i.product_id,
+            SUM(CASE WHEN o.ordered_on < '2024-12-01' THEN i.quantity*i.unit_price_cents ELSE 0 END) AS previous_90d_cents,
+            SUM(CASE WHEN o.ordered_on >= '2024-12-01' THEN i.quantity*i.unit_price_cents ELSE 0 END) AS current_90d_cents
+          FROM orders o JOIN order_items i ON i.order_id=o.id
+          WHERE o.status='paid' AND o.ordered_on >= '2024-09-02' AND o.ordered_on < '2025-03-01'
+          GROUP BY i.product_id
+        )
+        SELECT p.id AS product_id, COALESCE(r.previous_90d_cents,0) AS previous_90d_cents,
+          COALESCE(r.current_90d_cents,0) AS current_90d_cents,
+          COALESCE(r.current_90d_cents,0)-COALESCE(r.previous_90d_cents,0) AS change_cents
+        FROM products p LEFT JOIN revenue r ON r.product_id=p.id
+        ORDER BY p.id
+  - id: revenue-customer-product-leaders
+    dataset: revenue
+    title: Top two product revenue levels within each customer
+    difficulty: advanced
+    tags: [windows, ranking, aggregation]
+    prompt: >
+      As of 2025-03-01, rank each customer's products by paid line-item revenue
+      in the 365 completed days [2024-03-01, 2025-03-01), using ordered_on.
+      Revenue is quantity * unit_price_cents, not orders.total_cents. Include
+      only pairs with at least one qualifying line item, even if revenue is zero.
+      Keep the top two distinct revenue levels per customer, including all ties,
+      with consecutive ranks starting at 1. Return customer_id, product_id,
+      revenue_365d_cents, and revenue_rank. Pending and refunded orders are excluded.
+      Sort customer_id ascending, revenue_rank ascending, then product_id ascending.
+    ordered: true
+    columns: [customer_id, product_id, revenue_365d_cents, revenue_rank]
+    hints:
+      - Ranking belongs after each customer/product total has been computed.
+      - Use a ranking function that assigns tied revenues the same rank without gaps, partition by customer, then filter the resulting rank.
+    solutions:
+      shared: |
+        WITH revenue AS (
+          SELECT o.customer_id, i.product_id, SUM(i.quantity*i.unit_price_cents) AS revenue_365d_cents
+          FROM orders o JOIN order_items i ON i.order_id=o.id
+          WHERE o.status='paid' AND o.ordered_on >= '2024-03-01' AND o.ordered_on < '2025-03-01'
+          GROUP BY o.customer_id, i.product_id
+        ), ranked AS (
+          SELECT customer_id, product_id, revenue_365d_cents,
+            DENSE_RANK() OVER (PARTITION BY customer_id ORDER BY revenue_365d_cents DESC) AS revenue_rank
+          FROM revenue
+        )
+        SELECT customer_id, product_id, revenue_365d_cents, revenue_rank
+        FROM ranked WHERE revenue_rank <= 2
+        ORDER BY customer_id, revenue_rank, product_id
+  - id: revenue-monthly-trends
+    dataset: revenue
+    title: Calendar-complete monthly revenue trends
+    difficulty: advanced
+    tags: [dates, time-series, windows, ctes]
+    prompt: >
+      As of 2025-03-01, return all twelve months 2024-03 through 2025-02, even
+      months without sales. Revenue is quantity * unit_price_cents from paid
+      orders dated by ordered_on within [2024-03-01, 2025-03-01), not orders.total_cents.
+      Pending and refunded orders are excluded. Output month in YYYY-MM format,
+      revenue_cents, previous_month_cents, change_cents (current minus previous),
+      and rolling_3m_cents (current plus preceding two calendar months, clipped
+      at March 2024). Missing-month revenue is zero. March's previous_month_cents
+      and change_cents are NULL; later months compare against the immediately
+      preceding calendar month, including zero-sale months. Sort month ascending.
+    ordered: true
+    columns: [month, revenue_cents, previous_month_cents, change_cents, rolling_3m_cents]
+    hints:
+      - Establish all twelve calendar months before calculating comparisons and rolling totals.
+      - Join monthly paid revenue to a month spine, replace absent totals with zero, then apply LAG and an explicit three-row window.
+    solutions:
+      shared: |
+        WITH calendar AS (
+          SELECT '2024-03' AS month UNION ALL SELECT '2024-04' UNION ALL SELECT '2024-05'
+          UNION ALL SELECT '2024-06' UNION ALL SELECT '2024-07' UNION ALL SELECT '2024-08'
+          UNION ALL SELECT '2024-09' UNION ALL SELECT '2024-10' UNION ALL SELECT '2024-11'
+          UNION ALL SELECT '2024-12' UNION ALL SELECT '2025-01' UNION ALL SELECT '2025-02'
+        ), monthly AS (
+          SELECT SUBSTR(CAST(o.ordered_on AS CHAR(10)),1,7) AS month,
+            SUM(i.quantity*i.unit_price_cents) AS revenue_cents
+          FROM orders o JOIN order_items i ON i.order_id=o.id
+          WHERE o.status='paid' AND o.ordered_on >= '2024-03-01' AND o.ordered_on < '2025-03-01'
+          GROUP BY SUBSTR(CAST(o.ordered_on AS CHAR(10)),1,7)
+        ), complete AS (
+          SELECT c.month, COALESCE(m.revenue_cents,0) AS revenue_cents
+          FROM calendar c LEFT JOIN monthly m ON m.month=c.month
+        ), trends AS (
+          SELECT month, revenue_cents,
+            LAG(revenue_cents) OVER (ORDER BY month) AS previous_month_cents,
+            SUM(revenue_cents) OVER (ORDER BY month ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) AS rolling_3m_cents
+          FROM complete
+        )
+        SELECT month, revenue_cents, previous_month_cents,
+          revenue_cents-previous_month_cents AS change_cents, rolling_3m_cents
+        FROM trends ORDER BY month
+  - id: revenue-customer-concentration
+    dataset: revenue
+    title: Customer shares and cumulative revenue concentration
+    difficulty: advanced
+    tags: [windows, aggregation]
+    prompt: >
+      As of 2025-03-01, return every customer with customer_id, revenue_365d_cents,
+      revenue_pct, and cumulative_cents. Revenue is quantity * unit_price_cents
+      from paid orders dated by ordered_on in [2024-03-01, 2025-03-01), not
+      orders.total_cents. Pending and refunded orders contribute nothing. Include
+      zero revenue for customers without qualifying line items. revenue_pct is
+      this customer's percentage of all qualifying revenue, rounded to two
+      decimal places; return NULL when global revenue is zero. cumulative_cents
+      includes the current customer and all preceding customers sorted by revenue
+      descending, then customer_id ascending to break ties. Tied customers must
+      be added individually in that order. Return rows in that same order.
+    ordered: true
+    columns: [customer_id, revenue_365d_cents, revenue_pct, cumulative_cents]
+    hints:
+      - Compute exactly one revenue row per customer before deriving global shares and running totals.
+      - Use a global window sum for the denominator, guard zero division, and specify an ordered ROWS frame with customer_id as the tie-breaker for the cumulative sum.
+    solutions:
+      shared: |
+        WITH revenue AS (
+          SELECT o.customer_id, SUM(i.quantity*i.unit_price_cents) AS revenue_365d_cents
+          FROM orders o JOIN order_items i ON i.order_id=o.id
+          WHERE o.status='paid' AND o.ordered_on >= '2024-03-01' AND o.ordered_on < '2025-03-01'
+          GROUP BY o.customer_id
+        ), customers_revenue AS (
+          SELECT c.id AS customer_id, COALESCE(r.revenue_365d_cents,0) AS revenue_365d_cents
+          FROM customers c LEFT JOIN revenue r ON r.customer_id=c.id
+        )
+        SELECT customer_id, revenue_365d_cents,
+          ROUND(100.0*revenue_365d_cents/NULLIF(SUM(revenue_365d_cents) OVER (),0),2) AS revenue_pct,
+          SUM(revenue_365d_cents) OVER (ORDER BY revenue_365d_cents DESC,customer_id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS cumulative_cents
+        FROM customers_revenue ORDER BY revenue_365d_cents DESC,customer_id
